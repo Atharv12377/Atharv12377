@@ -1,5 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 46" width="168" height="46">
-<rect width="168" height="46" rx="10" fill="#0b1d3a"/>
-<rect width="6" height="46" rx="3" fill="#d62828"/>
-<text x="22" y="30" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#f4c430" letter-spacing=".5">Projects</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 32" width="300" height="32">
+  <rect width="300" height="32" fill="none"/>
+  <line x1="0" y1="16" x2="8" y2="16" stroke="#c9a227" stroke-width="1" opacity="0.6"/>
+  <rect x="10" y="13" width="4" height="6" rx="1" fill="#c9a227" opacity="0.7"/>
+  <text x="22" y="22" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="13" font-weight="600" fill="#e8e8f0" letter-spacing="2">PROJECTS</text>
 </svg>
