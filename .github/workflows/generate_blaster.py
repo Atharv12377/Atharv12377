@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
 generate_blaster.py
-Fetches the GitHub contribution graph and generates an animated
-Star Wars E-11 blaster SVG that fires laser bolts at the boxes.
+Fetches the GitHub contribution graph and generates an SVG where
+red laser bolts spontaneously fire across the grid and hit boxes.
+No gun. Just the laser.
 """
 
 import os
-import json
+import math
 import random
 import requests
 from datetime import datetime
 
-# ── Color mapping (dark GitHub theme) ──────────────────────────────────────
 LEVEL_COLORS = {
     "NONE":            "#161b22",
     "FIRST_QUARTILE":  "#0e4429",
@@ -19,6 +19,7 @@ LEVEL_COLORS = {
     "THIRD_QUARTILE":  "#26a641",
     "FOURTH_QUARTILE": "#39d353",
 }
+
 
 def fetch_contributions(username: str, token: str) -> dict:
     query = """
@@ -46,8 +47,7 @@ def fetch_contributions(username: str, token: str) -> dict:
         timeout=20,
     )
     resp.raise_for_status()
-    data = resp.json()
-    return data["data"]["user"]["contributionsCollection"]["contributionCalendar"]
+    return resp.json()["data"]["user"]["contributionsCollection"]["contributionCalendar"]
 
 
 def generate_svg(calendar: dict, seed: int = 42) -> str:
@@ -56,51 +56,70 @@ def generate_svg(calendar: dict, seed: int = 42) -> str:
     weeks = calendar["weeks"]
     total = calendar["totalContributions"]
 
-    # Layout constants
-    BOX   = 10   # box size px
-    GAP   = 3    # gap between boxes
-    STEP  = BOX + GAP
-
-    GUN_AREA_W  = 178   # horizontal space reserved for the gun
-    GRAPH_X0    = GUN_AREA_W + 10
-    GRAPH_Y0    = 28    # top of graph (below month labels)
-    GUN_TIP_X   = GUN_AREA_W - 2   # where bolts originate
-    GUN_BARREL_Y = 62   # y-centre of gun barrel
+    # ── Layout ────────────────────────────────────────────────────────────
+    BOX    = 10
+    GAP    = 3
+    STEP   = BOX + GAP
+    PAD_X  = 16
+    PAD_Y  = 24   # space for month labels
 
     N_WEEKS = len(weeks)
-    N_DAYS  = max(len(w["contributionDays"]) for w in weeks)
 
-    SVG_W = GRAPH_X0 + N_WEEKS * STEP + 20
-    SVG_H = GRAPH_Y0 + N_DAYS * STEP + 32
+    SVG_W = PAD_X * 2 + N_WEEKS * STEP
+    SVG_H = PAD_Y + 7 * STEP + 14
 
-    # ── Build list of all boxes ───────────────────────────────────────────
+    # ── Build box list ────────────────────────────────────────────────────
     all_boxes = []
     for wi, week in enumerate(weeks):
         for di, day in enumerate(week["contributionDays"]):
-            bx = GRAPH_X0 + wi * STEP
-            by = GRAPH_Y0 + di * STEP
+            bx = PAD_X + wi * STEP
+            by = PAD_Y + di * STEP
+            cx = bx + BOX // 2
+            cy = by + BOX // 2
             color = LEVEL_COLORS.get(day["contributionLevel"], "#161b22")
             all_boxes.append({
-                "x": bx, "y": by, "cx": bx + BOX // 2, "cy": by + BOX // 2,
+                "x": bx, "y": by, "cx": cx, "cy": cy,
                 "color": color, "count": day["contributionCount"],
+                "wi": wi, "di": di,
             })
 
-    # ── Pick shooting targets: prefer boxes with contributions ────────────
-    hot  = [b for b in all_boxes if b["count"] > 0]
-    cold = [b for b in all_boxes if b["count"] == 0]
-    pool = hot if len(hot) >= 10 else (hot + cold)
-    n_targets = min(14, len(pool))
-    targets = sorted(random.sample(pool, n_targets), key=lambda b: b["cx"])
+    # ── Pick shot pairs: source box → target box ──────────────────────────
+    # Prefer boxes with contributions as sources; any box can be a target
+    hot   = [b for b in all_boxes if b["count"] > 0]
+    pool  = hot if len(hot) >= 20 else all_boxes
+    n_shots = min(16, len(pool))
 
-    # ── Animation timing ─────────────────────────────────────────────────
-    SHOT_INTERVAL = 1.8   # seconds between shots
-    BOLT_DUR      = 0.45  # seconds for bolt to travel
-    CYCLE         = SHOT_INTERVAL * len(targets)
-    REPEATS       = 20    # enough loops for a long session
+    shots = []
+    used  = set()
+    candidates = random.sample(pool, min(n_shots * 3, len(pool)))
+    for src in candidates:
+        if len(shots) >= n_shots:
+            break
+        key_s = (src["wi"], src["di"])
+        if key_s in used:
+            continue
+        # Pick a target that isn't the same box and is in a different column
+        others = [b for b in all_boxes
+                  if abs(b["wi"] - src["wi"]) >= 3
+                  and (b["wi"], b["di"]) != key_s
+                  and (b["wi"], b["di"]) not in used]
+        if not others:
+            continue
+        tgt = random.choice(others)
+        key_t = (tgt["wi"], tgt["di"])
+        used.add(key_s)
+        used.add(key_t)
+        shots.append((src, tgt))
 
-    def begin_list(offset: float, extra: float = 0.0) -> str:
-        times = [f"{offset + extra + k * CYCLE:.2f}s" for k in range(REPEATS)]
-        return ";".join(times)
+    # ── Timing ────────────────────────────────────────────────────────────
+    SHOT_GAP   = 1.6   # seconds between each shot
+    BOLT_DUR   = 0.38  # seconds for bolt to travel
+    HIT_DUR    = 0.50  # seconds for hit flash
+    CYCLE      = SHOT_GAP * len(shots)
+    REPEATS    = 25
+
+    def begins(offset: float) -> str:
+        return ";".join(f"{offset + k * CYCLE:.2f}s" for k in range(REPEATS))
 
     # ── Month labels ─────────────────────────────────────────────────────
     seen_months: dict = {}
@@ -112,10 +131,9 @@ def generate_svg(calendar: dict, seed: int = 42) -> str:
                 seen_months[m] = wi
 
     # ──────────────────────────────────────────────────────────────────────
-    # BUILD SVG
+    # ASSEMBLE SVG
     # ──────────────────────────────────────────────────────────────────────
     out = []
-
     out.append(
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'viewBox="0 0 {SVG_W} {SVG_H}" width="{SVG_W}" height="{SVG_H}">'
@@ -123,22 +141,16 @@ def generate_svg(calendar: dict, seed: int = 42) -> str:
 
     # ── Defs ─────────────────────────────────────────────────────────────
     out.append("""<defs>
-  <filter id="lg"><feGaussianBlur stdDeviation="2.5" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-  <filter id="hg"><feGaussianBlur stdDeviation="5" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-  <filter id="gs"><feDropShadow dx="0" dy="1" stdDeviation="3"
-    flood-color="#ff2222" flood-opacity="0.35"/></filter>
-  <linearGradient id="bolt" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0"   stop-color="#ff4444" stop-opacity="0"/>
-    <stop offset="0.3" stop-color="#ff2222" stop-opacity="1"/>
-    <stop offset="0.7" stop-color="#ffcccc" stop-opacity="1"/>
-    <stop offset="1"   stop-color="#ff2222" stop-opacity="0"/>
-  </linearGradient>
-  <linearGradient id="gun-g" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#2e2e40"/>
-    <stop offset="1" stop-color="#16161f"/>
-  </linearGradient>
+  <!-- Laser glow -->
+  <filter id="lg" x="-50%" y="-200%" width="200%" height="500%">
+    <feGaussianBlur stdDeviation="1.8" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <!-- Hit explosion glow -->
+  <filter id="hg" x="-100%" y="-100%" width="300%" height="300%">
+    <feGaussianBlur stdDeviation="4" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
 </defs>""")
 
     # ── Background ───────────────────────────────────────────────────────
@@ -146,11 +158,11 @@ def generate_svg(calendar: dict, seed: int = 42) -> str:
 
     # ── Month labels ─────────────────────────────────────────────────────
     for month, wi in seen_months.items():
-        mx = GRAPH_X0 + wi * STEP
+        mx = PAD_X + wi * STEP
         out.append(
-            f'<text x="{mx}" y="20" '
+            f'<text x="{mx}" y="17" '
             f'font-family="\'Segoe UI\',Arial,sans-serif" '
-            f'font-size="9" fill="#444860">{month}</text>'
+            f'font-size="9" fill="#30363d">{month}</text>'
         )
 
     # ── Contribution grid ────────────────────────────────────────────────
@@ -160,132 +172,92 @@ def generate_svg(calendar: dict, seed: int = 42) -> str:
             f'width="{BOX}" height="{BOX}" rx="2" fill="{b["color"]}"/>'
         )
 
-    # ── Laser bolts + hit effects ─────────────────────────────────────────
-    for i, t in enumerate(targets):
-        t_begin  = i * SHOT_INTERVAL
-        h_begin  = t_begin + BOLT_DUR - 0.05
+    # ── Laser shots ──────────────────────────────────────────────────────
+    for i, (src, tgt) in enumerate(shots):
+        t0 = i * SHOT_GAP
 
-        bolt_starts = begin_list(t_begin)
-        hit_starts  = begin_list(h_begin)
-        bright_starts = begin_list(h_begin)
+        sx, sy = src["cx"], src["cy"]
+        tx, ty = tgt["cx"], tgt["cy"]
 
-        bx_start = GUN_TIP_X
-        bx_end   = t["cx"] - 28
-        by       = GUN_BARREL_Y - 1.5   # bolt y follows barrel, not target row
-        # (looks like it's fired horizontally; target y just receives the hit)
+        # Length and angle for the bolt rect
+        dx   = tx - sx
+        dy   = ty - sy
+        dist = math.hypot(dx, dy)
+        ang  = math.degrees(math.atan2(dy, dx))
 
-        # Bolt
+        bolt_w  = min(dist * 0.55, 55)   # bolt length ≈ half the distance, capped
+        bolt_h  = 2.2
+
+        # Bolt: starts at source, travels to just before target
+        # We animate the x position (pre-rotated) via transform
+        # Easier: use a <line> with stroke-dasharray/dashoffset trick
+
+        # ── Approach: animated line using dashoffset ───────────────────
+        # dash = total length, offset goes from +length → 0 (reveal) → -length (erase)
+        # This makes the line "draw" from source to target, then erase
+        dash   = round(dist, 1)
+
+        # Draw phase: dashoffset from +dash to 0
+        # Erase phase: dashoffset from 0 to -dash
+        # We'll do: draw (0→BOLT_DUR*0.6), hold briefly, erase (BOLT_DUR*0.6→BOLT_DUR)
+        draw_t  = round(BOLT_DUR * 0.55, 3)
+        erase_t = round(BOLT_DUR * 0.45, 3)
+
+        bolt_starts  = begins(t0)
+        hit_starts   = begins(t0 + draw_t)
+
+        # Core laser line (bright)
         out.append(
-            f'<rect x="{bx_start}" y="{by:.1f}" width="55" height="3" rx="1.5" '
-            f'fill="url(#bolt)" filter="url(#lg)" opacity="0">'
-            f'<animate attributeName="x" values="{bx_start};{bx_end}" '
+            f'<line x1="{sx}" y1="{sy}" x2="{tx}" y2="{ty}" '
+            f'stroke="#ff3333" stroke-width="1.8" '
+            f'stroke-dasharray="{dash}" stroke-dashoffset="{dash}" '
+            f'filter="url(#lg)" opacity="0">'
+            # Reveal the line
+            f'<animate attributeName="stroke-dashoffset" '
+            f'values="{dash};0" dur="{draw_t}s" begin="{bolt_starts}" fill="freeze"/>'
+            # Erase the line
+            f'<animate attributeName="stroke-dashoffset" '
+            f'values="0;{-dash}" dur="{erase_t}s" begin="{begins(t0 + draw_t)}" fill="freeze"/>'
+            # Opacity
+            f'<animate attributeName="opacity" '
+            f'values="0;0.95;0.95;0" keyTimes="0;0.05;0.88;1" '
             f'dur="{BOLT_DUR}s" begin="{bolt_starts}" fill="freeze"/>'
-            f'<animate attributeName="opacity" values="0;1;1;0" '
-            f'keyTimes="0;0.05;0.88;1" dur="{BOLT_DUR}s" begin="{bolt_starts}" fill="freeze"/>'
-            f'</rect>'
+            f'</line>'
         )
 
-        # Hit glow
+        # Bright white core (thinner, no filter)
         out.append(
-            f'<circle cx="{t["cx"]}" cy="{t["cy"]}" r="4" '
-            f'fill="#ff4444" opacity="0" filter="url(#hg)">'
-            f'<animate attributeName="r"       values="3;13;3" '
-            f'keyTimes="0;0.35;1" dur="0.55s" begin="{hit_starts}" fill="freeze"/>'
-            f'<animate attributeName="opacity" values="0;0.95;0" '
-            f'keyTimes="0;0.3;1"  dur="0.55s" begin="{hit_starts}" fill="freeze"/>'
+            f'<line x1="{sx}" y1="{sy}" x2="{tx}" y2="{ty}" '
+            f'stroke="#ffaaaa" stroke-width="0.7" '
+            f'stroke-dasharray="{dash}" stroke-dashoffset="{dash}" '
+            f'opacity="0">'
+            f'<animate attributeName="stroke-dashoffset" '
+            f'values="{dash};0" dur="{draw_t}s" begin="{bolt_starts}" fill="freeze"/>'
+            f'<animate attributeName="stroke-dashoffset" '
+            f'values="0;{-dash}" dur="{erase_t}s" begin="{begins(t0 + draw_t)}" fill="freeze"/>'
+            f'<animate attributeName="opacity" '
+            f'values="0;1;1;0" keyTimes="0;0.05;0.85;1" '
+            f'dur="{BOLT_DUR}s" begin="{bolt_starts}" fill="freeze"/>'
+            f'</line>'
+        )
+
+        # Hit glow (outer)
+        out.append(
+            f'<circle cx="{tx}" cy="{ty}" r="3" fill="#ff2222" opacity="0" filter="url(#hg)">'
+            f'<animate attributeName="r" values="2;14;2" '
+            f'keyTimes="0;0.35;1" dur="{HIT_DUR}s" begin="{hit_starts}" fill="freeze"/>'
+            f'<animate attributeName="opacity" values="0;0.9;0" '
+            f'keyTimes="0;0.25;1" dur="{HIT_DUR}s" begin="{hit_starts}" fill="freeze"/>'
             f'</circle>'
         )
 
-        # Bright inner dot
+        # Hit inner bright dot
         out.append(
-            f'<circle cx="{t["cx"]}" cy="{t["cy"]}" r="2.5" fill="#ffeeaa" opacity="0">'
+            f'<circle cx="{tx}" cy="{ty}" r="2.5" fill="#ffffff" opacity="0">'
             f'<animate attributeName="opacity" values="0;1;0" '
-            f'keyTimes="0;0.2;1" dur="0.4s" begin="{bright_starts}" fill="freeze"/>'
+            f'keyTimes="0;0.2;1" dur="0.3s" begin="{hit_starts}" fill="freeze"/>'
             f'</circle>'
         )
-
-    # ── E-11 Blaster gun ─────────────────────────────────────────────────
-    # Positioned so barrel tip is at (GUN_TIP_X, GUN_BARREL_Y)
-    GX = 6
-    GY = GUN_BARREL_Y - 26   # align barrel centre
-
-    # Build muzzle-flash begin list (fires on every shot)
-    flash_begins = begin_list(0.0)
-
-    out.append(f'<g transform="translate({GX},{GY})" filter="url(#gs)">')
-
-    # Main barrel
-    out.append(
-        '<rect x="30" y="22" width="130" height="9" rx="3" '
-        'fill="url(#gun-g)" stroke="#3a3a52" stroke-width="0.8"/>'
-    )
-    # Muzzle narrowing
-    out.append(
-        '<rect x="158" y="24" width="16" height="5" rx="2" '
-        'fill="#1a1a2a" stroke="#55556a" stroke-width="0.5"/>'
-    )
-    # Scope
-    out.append(
-        '<rect x="62" y="13" width="54" height="10" rx="2" '
-        'fill="#1e1e30" stroke="#3a3a52" stroke-width="0.7"/>'
-    )
-    out.append('<rect x="67" y="15" width="7" height="6" rx="1" fill="#12121e"/>')
-    out.append('<rect x="101" y="15" width="7" height="6" rx="1" fill="#12121e"/>')
-
-    # Handle / grip
-    out.append(
-        '<rect x="50" y="30" width="19" height="28" rx="3" '
-        'fill="#1e1e30" stroke="#3a3a52" stroke-width="0.7"/>'
-    )
-    for ly in range(36, 56, 5):
-        out.append(f'<line x1="53" y1="{ly}" x2="66" y2="{ly}" stroke="#2a2a3e" stroke-width="0.6"/>')
-
-    # Stock
-    out.append(
-        '<rect x="24" y="20" width="30" height="15" rx="3" '
-        'fill="#191928" stroke="#3a3a52" stroke-width="0.7"/>'
-    )
-
-    # Power cell indicator (pulses red)
-    cell_dur = f"{SHOT_INTERVAL:.2f}s"
-    out.append(
-        f'<rect x="82" y="25" width="12" height="5" rx="1" fill="#ff2222" opacity="0.18">'
-        f'<animate attributeName="opacity" values="0.12;0.9;0.12" dur="{cell_dur}" repeatCount="indefinite"/>'
-        f'</rect>'
-    )
-
-    # Detail seam lines
-    out.append('<line x1="30" y1="27" x2="155" y2="27" stroke="#2e2e42" stroke-width="0.5"/>')
-    out.append('<line x1="30" y1="31" x2="155" y2="31" stroke="#2e2e42" stroke-width="0.5"/>')
-
-    # Trigger
-    out.append(
-        '<path d="M 60 31 L 65 47 L 68 47 L 63 31 Z" '
-        'fill="#1a1a2a" stroke="#3a3a52" stroke-width="0.5"/>'
-    )
-
-    # Muzzle flash (outer + inner)
-    out.append(
-        f'<ellipse cx="170" cy="26.5" rx="10" ry="6" fill="#ff7733" opacity="0">'
-        f'<animate attributeName="opacity" values="0;0.95;0" dur="0.18s" begin="{flash_begins}" fill="freeze"/>'
-        f'</ellipse>'
-    )
-    out.append(
-        f'<ellipse cx="170" cy="26.5" rx="5" ry="3" fill="#ffffbb" opacity="0">'
-        f'<animate attributeName="opacity" values="0;1;0" dur="0.14s" begin="{flash_begins}" fill="freeze"/>'
-        f'</ellipse>'
-    )
-
-    out.append('</g>')  # end gun group
-
-    # ── Bottom label ─────────────────────────────────────────────────────
-    out.append(
-        f'<text x="{GX + 8}" y="{SVG_H - 6}" '
-        f'font-family="\'Courier New\',monospace" font-size="8" '
-        f'fill="#2e2e42" letter-spacing="1">'
-        f'IMPERIAL E-11  ·  BLASTER ENGAGED  ·  '
-        f'{total} CONTRIBUTIONS</text>'
-    )
 
     out.append('</svg>')
     return "\n".join(out)
@@ -302,11 +274,11 @@ if __name__ == "__main__":
     calendar = fetch_contributions(username, token)
     print(f"Total contributions: {calendar['totalContributions']}")
 
-    svg_content = generate_svg(calendar)
+    svg = generate_svg(calendar)
 
     os.makedirs("dist", exist_ok=True)
     out_path = os.path.join("dist", "github-blaster.svg")
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(svg_content)
+        f.write(svg)
 
     print(f"Saved → {out_path}")
