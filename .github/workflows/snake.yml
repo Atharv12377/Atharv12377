@@ -1,0 +1,24 @@
+name: Generate snake
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: Platane/snk/svg-only@v3
+        with:
+          github_user_name: ${{ github.repository_owner }}
+          outputs: |
+            dist/github-snake-dark.svg?color_snake=%23f4c430&color_dots=%231c3b6b,%232a5a9a,%23d62828,%23f4c430,%23ffffff
+      - uses: crazy-max/github-pages-deploy-action@v4
+        with:
+          target_branch: output
+          folder: dist

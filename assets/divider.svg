@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 22" width="1000" height="22">
+<defs><linearGradient id="d" x1="0" x2="1"><stop offset="0" stop-color="#d62828" stop-opacity="0"/><stop offset=".3" stop-color="#d62828"/><stop offset=".5" stop-color="#f4c430"/><stop offset=".7" stop-color="#d62828"/><stop offset="1" stop-color="#d62828" stop-opacity="0"/></linearGradient></defs>
+<path d="M0 11 Q 25 1 50 11 T 100 11 T 150 11 T 200 11 T 250 11 T 300 11 T 350 11 T 400 11 T 450 11 T 500 11 T 550 11 T 600 11 T 650 11 T 700 11 T 750 11 T 800 11 T 850 11 T 900 11 T 950 11 T 1000 11" fill="none" stroke="url(#d)" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
